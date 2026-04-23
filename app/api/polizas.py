@@ -16,6 +16,7 @@ from app.schemas.poliza import (
     PolizaDetailOut,
     PolizaOut,
     PaginatedPolizas,
+    PolizaUpdate,
 )
 from app.core.security import get_current_user
 
@@ -130,3 +131,88 @@ def get_poliza(poliza_id: int, db: Session = Depends(get_db)):
         )
 
     return poliza
+
+
+@router.put(
+    "/{poliza_id}",
+    response_model=PolizaDetailOut,
+    summary="Actualizar póliza con ítems (transacción atómica)",
+)
+def update_poliza(poliza_id: int, payload: PolizaUpdate, db: Session = Depends(get_db)):
+    """
+    Actualiza una póliza (cabecera) y sus ítems dentro de una única transacción.
+    Si se proporcionan ítems, reemplaza todos los ítems existentes.
+    """
+    poliza = db.query(Poliza).filter(Poliza.id == poliza_id).first()
+    if not poliza:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No se encontró la póliza con id {poliza_id}.",
+        )
+
+    # Verificar correlativo único si se está cambiando
+    if payload.correlativo and payload.correlativo != poliza.correlativo:
+        if db.query(Poliza).filter(Poliza.correlativo == payload.correlativo).first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Ya existe una póliza con correlativo {payload.correlativo}.",
+            )
+
+    try:
+        # Actualizar campos de la póliza
+        for field, value in payload.model_dump(exclude_unset=True).items():
+            if field != "items":
+                setattr(poliza, field, value)
+
+        # Si se proporcionan ítems, reemplazar todos
+        if payload.items is not None:
+            # Eliminar ítems existentes
+            db.query(PolizaItem).filter(PolizaItem.poliza_id == poliza_id).delete()
+            # Crear nuevos ítems
+            for item_data in payload.items:
+                item = PolizaItem(
+                    poliza_id=poliza_id,
+                    **item_data.model_dump(),
+                )
+                db.add(item)
+
+        db.commit()
+        db.refresh(poliza)
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al actualizar la póliza: {str(e)}",
+        )
+
+    # Cargar ítems para la respuesta
+    db.refresh(poliza)
+    return poliza
+
+
+@router.delete(
+    "/{poliza_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Eliminar póliza con ítems (transacción atómica)",
+)
+def delete_poliza(poliza_id: int, db: Session = Depends(get_db)):
+    """
+    Elimina una póliza y todos sus ítems en una transacción atómica.
+    """
+    poliza = db.query(Poliza).filter(Poliza.id == poliza_id).first()
+    if not poliza:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No se encontró la póliza con id {poliza_id}.",
+        )
+
+    try:
+        db.delete(poliza)  # Cascade delete para ítems
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al eliminar la póliza: {str(e)}",
+        )

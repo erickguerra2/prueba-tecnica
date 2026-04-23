@@ -38,6 +38,16 @@ class PolizaCreate(BaseModel):
     items: List[PolizaItemCreate] = []
 
 
+class PolizaUpdate(BaseModel):
+    """Payload para actualizar una póliza con sus ítems (transacción atómica)."""
+    correlativo: Optional[int] = None
+    fecha_declaracion: Optional[date] = None
+    tipo_cambio_dolar: Optional[float] = None
+    aduana_id: Optional[int] = None
+    tipo_regimen_id: Optional[int] = None
+    items: Optional[List[PolizaItemCreate]] = None
+
+
 class PolizaOut(BaseModel):
     """Respuesta de una póliza (cabecera sin ítems)."""
     id: int
